@@ -1,0 +1,352 @@
+
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Add City | GridSpot EV</title>
+
+    <style>
+
+        /* RESET */
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        /* PAGE BACKGROUND */
+
+        body.add-city-page {
+            min-height: 100vh;
+            font-family: Arial, Helvetica, sans-serif;
+            background: linear-gradient(135deg, #eaf2ff, #f8fafc);
+            color: #111827;
+            overflow-x: hidden;
+        }
+
+        /* NAVBAR */
+
+        .add-city-navbar {
+            width: 100%;
+            min-height: 76px;
+            padding: 15px 7%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #111827;
+            border-bottom: 1px solid #1e293b;
+            box-shadow: 0 3px 15px rgba(0, 0, 0, 0.12);
+        }
+
+        .add-city-navbar .logo {
+            font-size: 25px;
+            font-weight: 900;
+            color: #60a5fa;
+            text-decoration: none;
+        }
+
+        .navbar-back-link {
+            padding: 11px 17px;
+            color: #ffffff;
+            background: #1e40af;
+            border: 1px solid #3b82f6;
+            border-radius: 9px;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 700;
+            transition: 0.3s;
+        }
+
+        .navbar-back-link:hover {
+            background: #2563eb;
+            transform: translateY(-2px);
+        }
+
+        /* FORM CONTAINER */
+
+        .city-form-container {
+            width: 92%;
+            max-width: 570px;
+            margin: 65px auto;
+            padding: 42px;
+            background: #ffffff;
+            border: 1px solid #dbeafe;
+            border-radius: 20px;
+            box-shadow: 0 20px 50px rgba(15, 23, 42, 0.10);
+            position: relative;
+        }
+
+        .city-form-container::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 5px;
+            border-radius: 20px 20px 0 0;
+            background: linear-gradient(90deg, #1d4ed8, #3b82f6, #60a5fa);
+        }
+
+        /* HEADING */
+
+        .eyebrow {
+            display: inline-block;
+            padding: 7px 12px;
+            margin-bottom: 17px;
+            color: #1d4ed8;
+            background: #dbeafe;
+            border-radius: 30px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .city-form-container h1 {
+            color: #111827;
+            font-size: 31px;
+            font-weight: 900;
+            margin-bottom: 12px;
+        }
+
+        .form-description {
+            color: #64748b;
+            font-size: 14px;
+            line-height: 1.7;
+            margin-bottom: 30px;
+        }
+
+        /* FORM */
+
+        .city-form {
+            width: 100%;
+        }
+
+        .city-form .form-group {
+            margin-bottom: 22px;
+        }
+
+        .city-form label {
+            display: block;
+            margin-bottom: 9px;
+            color: #1f2937;
+            font-size: 13px;
+            font-weight: 800;
+        }
+
+        .city-form input {
+            display: block;
+            width: 100%;
+            height: 49px;
+            padding: 0 15px;
+            color: #111827;
+            background: #ffffff;
+            border: 1px solid #cbd5e1;
+            border-radius: 9px;
+            outline: none;
+            font-size: 14px;
+            transition: 0.25s;
+        }
+
+        .city-form input::placeholder {
+            color: #94a3b8;
+        }
+
+        .city-form input:focus {
+            border-color: #2563eb;
+            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+        }
+
+        /* SAVE BUTTON */
+
+        .city-save-button {
+            width: 100%;
+            min-height: 50px;
+            margin-top: 8px;
+            padding: 13px 20px;
+            color: #ffffff;
+            background: linear-gradient(135deg, #1d4ed8, #1e3a8a);
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 800;
+            cursor: pointer;
+            box-shadow: 0 7px 16px rgba(37, 99, 235, 0.20);
+            transition: 0.3s;
+        }
+
+        .city-save-button:hover {
+            background: linear-gradient(135deg, #1e40af, #172554);
+            transform: translateY(-2px);
+        }
+
+        /* BACK LINK */
+
+        .city-back-link {
+            display: block;
+            width: fit-content;
+            margin: 24px auto 0;
+            color: #475569;
+            font-size: 13px;
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .city-back-link:hover {
+            color: #2563eb;
+        }
+
+        /* DJANGO MESSAGES */
+
+        .city-message {
+            padding: 13px 15px;
+            margin-bottom: 22px;
+            border-radius: 9px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .city-message.success {
+            color: #166534;
+            background: #dcfce7;
+            border: 1px solid #86efac;
+        }
+
+        .city-message.error {
+            color: #991b1b;
+            background: #fee2e2;
+            border: 1px solid #fca5a5;
+        }
+
+        .city-message.warning {
+            color: #92400e;
+            background: #fef3c7;
+            border: 1px solid #fcd34d;
+        }
+
+        .city-message.info {
+            color: #075985;
+            background: #e0f2fe;
+            border: 1px solid #7dd3fc;
+        }
+
+        /* RESPONSIVE DESIGN */
+
+        @media (max-width: 600px) {
+
+            .add-city-navbar {
+                padding: 14px 5%;
+            }
+
+            .add-city-navbar .logo {
+                font-size: 21px;
+            }
+
+            .city-form-container {
+                margin: 35px auto;
+                padding: 30px 22px;
+            }
+
+            .city-form-container h1 {
+                font-size: 26px;
+            }
+        }
+
+    </style>
+
+</head>
+
+<body class="add-city-page">
+
+    <header class="add-city-navbar">
+
+        <a href="/" class="logo">
+            GridSpot EV
+        </a>
+
+        <a href="/" class="navbar-back-link">
+            ← Back to Dashboard
+        </a>
+
+    </header>
+
+    <main class="city-form-container">
+
+        <span class="eyebrow">
+            LOCATION MANAGEMENT
+        </span>
+
+        <h1>Add New City</h1>
+
+        <p class="form-description">
+            Add a city to GridSpot EV to manage its charging
+            stations and monitor electric vehicle charging activity.
+        </p>
+
+        {% if messages %}
+            {% for message in messages %}
+                <div class="city-message {{ message.tags }}">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        {% endif %}
+
+        <form method="POST"
+              action="{% url 'add_city' %}"
+              class="city-form">
+
+            {% csrf_token %}
+
+            <div class="form-group">
+                <label for="city_name">City Name</label>
+                <input
+                    type="text"
+                    id="city_name"
+                    name="city_name"
+                    placeholder="Enter city name"
+                    required
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="state">State</label>
+                <input
+                    type="text"
+                    id="state"
+                    name="state"
+                    placeholder="Enter state name"
+                    required
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="country">Country</label>
+                <input
+                    type="text"
+                    id="country"
+                    name="country"
+                    value="India"
+                    required
+                >
+            </div>
+
+            <button type="submit" class="city-save-button">
+                + Add City
+            </button>
+
+        </form>
+
+        <a href="/" class="city-back-link">
+            ← Return to Dashboard
+        </a>
+
+    </main>
+
+</body>
+</html>

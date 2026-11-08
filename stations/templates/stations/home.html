@@ -1,0 +1,1167 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>GridSpot EV | Charging Station Finder</title>
+
+    <link rel="stylesheet"
+          href="{% static 'stations/css/style.css' %}?v=18">
+
+    <link rel="stylesheet"
+          href="https://unpkg.com/maplibre-gl@5.6.1/dist/maplibre-gl.css">
+
+    <script src="https://unpkg.com/maplibre-gl@5.6.1/dist/maplibre-gl.js"></script>
+</head>
+
+<body>
+
+<header class="topbar">
+    <a href="/" class="logo">GridSpot<span>EV</span></a>
+
+    <div class="nav-right">
+        <span class="map-status"><i></i> Interactive Map</span>
+        <a href="/admin/" class="admin-link">Admin</a>
+    </div>
+</header>
+
+<main class="app-layout">
+
+    <aside class="sidebar">
+
+        <div class="heading">
+            <span class="eyebrow">EV CHARGING NETWORK</span>
+            <h1>Find a charging station</h1>
+            <p>Discover charging points around your location.</p>
+        </div>
+
+        <button id="gpsButton" class="gps-button" type="button">
+            <span>◎</span> Detect My Location
+        </button>
+
+        <div id="status" class="status-message">
+            Detect your location to find nearby stations.
+        </div>
+
+        <div id="locationSummary" class="location-summary" hidden>
+            <span class="blue-dot"></span>
+            <div>
+                <strong id="currentPlace">Detecting locality...</strong>
+                <small id="currentCity">Detecting city...</small>
+                <small id="currentCoordinates"></small>
+            </div>
+        </div>
+
+        <div class="divider-title">
+            <span>OR SEARCH BY AREA</span>
+        </div>
+
+        <div class="form-group">
+            <label for="city">Select city</label>
+            <select id="city">
+                <option value="">Choose a city</option>
+                {% for city in cities %}
+                <option value="{{ city.id }}">{{ city.city_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="area">Select locality / area</label>
+            <select id="area" disabled>
+                <option value="">Choose a city first</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="radius">Search radius</label>
+            <select id="radius">
+                <option value="5" selected>Within 5 KM</option>
+                <option value="10">Within 10 KM</option>
+                <option value="15">Within 15 KM</option>
+                <option value="20">Within 20 KM</option>
+            </select>
+        </div>
+
+        <button id="searchButton" class="search-button" type="button">
+            Search Stations
+        </button>
+
+        <div class="results-header">
+            <div>
+                <h2>Nearby stations</h2>
+                <p id="resultCount">0 stations found</p>
+            </div>
+            <span class="lightning">⚡</span>
+        </div>
+
+        <div id="stationResults" class="station-results">
+            <div class="empty-state">
+                <span>⌖</span>
+                <strong>No stations to display</strong>
+                <p>Detect your location or select a city and area.</p>
+            </div>
+        </div>
+
+        <a href="/add-city/" class="add-city-link">+ Add a new city</a>
+
+    </aside>
+
+    <section class="map-section">
+
+        <div id="map"></div>
+
+        <div class="map-heading">
+            <span class="map-heading-dot"></span>
+            Charging Station Map
+        </div>
+
+        <div class="map-legend">
+            <div><span class="legend-blue"></span> Your location</div>
+            <div><span class="legend-red"></span> Charging station</div>
+            <div><span class="legend-route"></span> Driving route</div>
+        </div>
+
+        <div id="routeInfo" class="route-info" hidden>
+            <button id="closeRoute" class="close-route" type="button">×</button>
+
+            <span class="route-label">YOUR DRIVING ROUTE</span>
+
+            <div class="route-details">
+                <div>
+                    <strong id="routeDistance">--</strong>
+                    <small>Distance</small>
+                </div>
+                <div>
+                    <strong id="routeDuration">--</strong>
+                    <small>Estimated time</small>
+                </div>
+            </div>
+
+            <div id="routeStationDetails" class="route-station-details"></div>
+
+            <p>Estimated driving time. Actual time may vary.</p>
+        </div>
+
+    </section>
+</main>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+
+    const $ = id => document.getElementById(id);
+
+    const citySelect = $("city");
+    const areaSelect = $("area");
+    const radiusSelect = $("radius");
+    const gpsButton = $("gpsButton");
+    const searchButton = $("searchButton");
+    const statusBox = $("status");
+    const stationResults = $("stationResults");
+    const resultCount = $("resultCount");
+
+    let currentLocation = null;
+    let markers = [];
+    let stations = [];
+    let searchVersion = 0;
+    let areaLoadVersion = 0;
+
+    // MAP INITIALIZATION
+
+    const map = new maplibregl.Map({
+        container: "map",
+        style: "https://tiles.openfreemap.org/styles/liberty",
+        center: [77.5946, 12.9716],
+        zoom: 11
+    });
+
+    map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+    map.on("load", () => map.resize());
+
+    window.addEventListener("resize", () => map.resize());
+
+
+    // COMMON FUNCTIONS
+
+    function setStatus(message, type = "") {
+        statusBox.textContent = message;
+        statusBox.className = "status-message " + type;
+    }
+
+    async function getJSON(url) {
+        const response = await fetch(url);
+
+        let data;
+
+        try {
+            data = await response.json();
+        } catch (error) {
+            throw new Error("The server returned an invalid response.");
+        }
+
+        if (!response.ok) {
+            throw new Error(data.error || "Server error: " + response.status);
+        }
+
+        return data;
+    }
+
+    function coordinates(station) {
+        const lat = Number(station.latitude ?? station.lat);
+        const lon = Number(station.longitude ?? station.lon ?? station.lng);
+
+        if (
+            !Number.isFinite(lat) ||
+            !Number.isFinite(lon) ||
+            lat < -90 || lat > 90 ||
+            lon < -180 || lon > 180
+        ) {
+            return null;
+        }
+
+        return { lat, lon };
+    }
+
+    function distanceKm(a, b) {
+        const rad = value => value * Math.PI / 180;
+
+        const dLat = rad(b.lat - a.lat);
+        const dLon = rad(b.lon - a.lon);
+
+        const x =
+            Math.sin(dLat / 2) ** 2 +
+            Math.cos(rad(a.lat)) *
+            Math.cos(rad(b.lat)) *
+            Math.sin(dLon / 2) ** 2;
+
+        return 6371 * 2 * Math.atan2(
+            Math.sqrt(x),
+            Math.sqrt(1 - x)
+        );
+    }
+
+    function safeText(value) {
+        return String(value ?? "").replace(
+            /[&<>"']/g,
+            char => ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#039;"
+            })[char]
+        );
+    }
+
+    function normalizeName(value) {
+        return String(value || "")
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, "");
+    }
+
+
+    // CHARGER DETAILS
+
+    function chargerDetailsHTML(station) {
+        if (
+            station.source === "OpenStreetMap" ||
+            station.availability_unknown ||
+            station.available_chargers === null ||
+            station.available_chargers === undefined
+        ) {
+            return `
+                <div class="availability-unknown">
+                    Availability unknown<br>
+                    <small>Live charger information is not available.</small>
+                </div>
+            `;
+        }
+
+        const available = Number(station.available_chargers || 0);
+        const total = Number(station.total_chargers || 0);
+        const busy = Number(station.busy_chargers || 0);
+
+        return `
+            <div class="charger-details">
+                <div class="charger-stat available">
+                    <strong>${available}</strong>
+                    <small>Available</small>
+                </div>
+                <div class="charger-stat">
+                    <strong>${total}</strong>
+                    <small>Total</small>
+                </div>
+                <div class="charger-stat busy">
+                    <strong>${busy}</strong>
+                    <small>Busy</small>
+                </div>
+            </div>
+        `;
+    }
+
+
+    // STATION STATUS
+
+    function stationStatusHTML(station) {
+        if (
+            station.source === "OpenStreetMap" ||
+            station.station_status === "Unknown" ||
+            station.is_active === null ||
+            station.is_active === undefined
+        ) {
+            return `<span class="station-status unknown">Status unknown</span>`;
+        }
+
+        const isOpen =
+            station.is_active === true ||
+            station.station_status === "Open";
+
+        return isOpen
+            ? `<span class="station-status open">● Open</span>`
+            : `<span class="station-status closed">● Closed</span>`;
+    }
+
+
+    // MAP MARKERS
+
+    function clearMarkers() {
+        markers.forEach(marker => marker.remove());
+        markers = [];
+    }
+
+    function addGpsMarker() {
+        if (!currentLocation) return;
+
+        const element = document.createElement("div");
+        element.className = "gps-marker";
+
+        const marker = new maplibregl.Marker({
+            element: element,
+            anchor: "center"
+        })
+        .setLngLat([currentLocation.lon, currentLocation.lat])
+        .setPopup(
+            new maplibregl.Popup({ offset: 15 })
+                .setText("Your current location")
+        )
+        .addTo(map);
+
+        markers.push(marker);
+    }
+
+    function stationPopupHTML(station) {
+        return `
+            <div class="station-popup">
+                <h3>${safeText(station.name || "Charging station")}</h3>
+                <p>${safeText(station.address || "Address unavailable")}</p>
+                ${stationStatusHTML(station)}
+                ${chargerDetailsHTML(station)}
+                <p>Source: ${safeText(station.source || "Unknown")}</p>
+            </div>
+        `;
+    }
+
+    function addStationMarkers(list) {
+        clearMarkers();
+        addGpsMarker();
+
+        list.forEach(station => {
+            const point = coordinates(station);
+            if (!point) return;
+
+            const element = document.createElement("div");
+            element.className = "station-marker";
+
+            const popup = new maplibregl.Popup({
+                offset: 18
+            }).setHTML(stationPopupHTML(station));
+
+            const marker = new maplibregl.Marker({
+                element: element,
+                anchor: "bottom"
+            })
+            .setLngLat([point.lon, point.lat])
+            .setPopup(popup)
+            .addTo(map);
+
+            markers.push(marker);
+        });
+    }
+
+
+    // STATION RESULTS
+
+    function emptyResults(message, description) {
+        stationResults.innerHTML = `
+            <div class="empty-state">
+                <span>⌖</span>
+                <strong>${safeText(message)}</strong>
+                <p>${safeText(description)}</p>
+            </div>
+        `;
+    }
+
+    function displayStations(list, useRadius = false) {
+        stations = (Array.isArray(list) ? list : [])
+            .map(station => {
+                const point = coordinates(station);
+                if (!point) return null;
+
+                const item = { ...station, _point: point };
+
+                if (currentLocation) {
+                    item.distance = distanceKm(currentLocation, point);
+                }
+
+                return item;
+            })
+            .filter(Boolean);
+
+        if (useRadius && currentLocation) {
+            const radius = Number(radiusSelect.value);
+
+            stations = stations
+                .filter(station => station.distance <= radius)
+                .sort((a, b) => a.distance - b.distance);
+        }
+
+        resultCount.textContent =
+            `${stations.length} station${stations.length === 1 ? "" : "s"} found`;
+
+        if (!stations.length) {
+            emptyResults(
+                "No charging stations found",
+                "Try another area or increase your search radius."
+            );
+
+            addStationMarkers([]);
+            return;
+        }
+
+        stationResults.innerHTML = "";
+
+        stations.forEach((station, index) => {
+            const card = document.createElement("article");
+            card.className = "station-card";
+
+            const distanceText = Number.isFinite(station.distance)
+                ? `${station.distance.toFixed(1)} km away`
+                : "Distance unavailable";
+
+            card.innerHTML = `
+                <div class="card-top">
+                    <span class="station-index">${index + 1}</span>
+                    <span class="station-tag">EV STATION</span>
+                </div>
+
+                <h3>${safeText(station.name || "Charging station")}</h3>
+
+                <p class="station-address">
+                    ${safeText(
+                        station.address ||
+                        station.area ||
+                        station.city ||
+                        "Address unavailable"
+                    )}
+                </p>
+
+                <div class="card-status-row">
+                    ${stationStatusHTML(station)}
+                    <span class="station-source">
+                        ${safeText(station.source || "")}
+                    </span>
+                </div>
+
+                ${chargerDetailsHTML(station)}
+
+                <div class="card-bottom">
+                    <span class="distance-text">⌖ ${distanceText}</span>
+                    <button type="button" class="directions-button">
+                        Get Directions ↗
+                    </button>
+                </div>
+            `;
+
+            card.querySelector(".directions-button")
+                .addEventListener("click", event => {
+                    event.stopPropagation();
+                    showRoute(station);
+                });
+
+            card.addEventListener("click", () => {
+                map.flyTo({
+                    center: [station._point.lon, station._point.lat],
+                    zoom: 16
+                });
+            });
+
+            stationResults.appendChild(card);
+        });
+
+        addStationMarkers(stations);
+    }
+
+
+    // REMOVE DUPLICATE MYSQL / OSM STATIONS
+
+    function mergeStations(mysqlList, osmList) {
+        const combined = [...mysqlList];
+
+        osmList.forEach(osmStation => {
+            const osmPoint = coordinates(osmStation);
+            if (!osmPoint) return;
+
+            const duplicate = combined.some(existing => {
+                const existingPoint = coordinates(existing);
+                if (!existingPoint) return false;
+
+                const gap = distanceKm(existingPoint, osmPoint);
+
+                const firstName = normalizeName(existing.name);
+                const secondName = normalizeName(osmStation.name);
+
+                if (gap <= 0.008) return true;
+
+                if (
+                    firstName &&
+                    secondName &&
+                    firstName !== "evchargingstation" &&
+                    secondName !== "evchargingstation" &&
+                    firstName === secondName &&
+                    gap <= 0.08
+                ) {
+                    return true;
+                }
+
+                return false;
+            });
+
+            if (!duplicate) combined.push(osmStation);
+        });
+
+        return combined;
+    }
+
+
+    // LOAD AREAS
+
+    async function loadAreas(cityId) {
+        const thisLoad = ++areaLoadVersion;
+
+        areaSelect.disabled = true;
+        areaSelect.innerHTML =
+            '<option value="">Loading areas...</option>';
+
+        if (!cityId) {
+            areaSelect.innerHTML =
+                '<option value="">Choose a city first</option>';
+            return [];
+        }
+
+        try {
+            const data = await getJSON(
+                `/get-areas/${encodeURIComponent(cityId)}/`
+            );
+
+            if (thisLoad !== areaLoadVersion) return [];
+
+            const areas = data.areas || [];
+
+            areaSelect.innerHTML =
+                '<option value="">Choose an area</option>';
+
+            areas.forEach(area => {
+                const option = document.createElement("option");
+                option.value = area.id;
+                option.textContent = area.area_name;
+                areaSelect.appendChild(option);
+            });
+
+            areaSelect.disabled = areas.length === 0;
+
+            if (!areas.length) {
+                areaSelect.innerHTML =
+                    '<option value="">No areas available for this city</option>';
+            }
+
+            return areas;
+
+        } catch (error) {
+            if (thisLoad !== areaLoadVersion) return [];
+
+            areaSelect.innerHTML =
+                '<option value="">Unable to load areas</option>';
+
+            setStatus(error.message, "error");
+            return [];
+        }
+    }
+
+    citySelect.addEventListener("change", async () => {
+        areaSelect.value = "";
+        searchVersion++;
+
+        const cityId = citySelect.value;
+
+        if (!cityId) {
+            await loadAreas("");
+            setStatus("Please select a city.");
+            return;
+        }
+
+        setStatus("Loading localities for the selected city...");
+
+        const areas = await loadAreas(cityId);
+
+        if (citySelect.value !== cityId) return;
+
+        setStatus(
+            areas.length
+                ? `${areas.length} localities loaded. Now select an area.`
+                : "No localities are saved for this city in MySQL.",
+            areas.length ? "success" : "error"
+        );
+    });
+
+
+    // GPS LOCATION
+
+    function getGPS() {
+        return new Promise((resolve, reject) => {
+            if (!navigator.geolocation) {
+                reject(new Error("Geolocation is not supported by this browser."));
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                resolve,
+                error => {
+                    if (error.code === 1) {
+                        reject(new Error("Location permission denied. Allow location access."));
+                    } else if (error.code === 2) {
+                        reject(new Error("Your location is unavailable. Try again."));
+                    } else if (error.code === 3) {
+                        reject(new Error("Location timed out. Try again."));
+                    } else {
+                        reject(new Error("Could not detect your location."));
+                    }
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 15000,
+                    maximumAge: 30000
+                }
+            );
+        });
+    }
+
+
+    // DETECT CITY AND LOCALITY
+
+    async function updateDetectedArea(lat, lon) {
+        $("currentPlace").textContent = "Finding locality...";
+        $("currentCity").textContent = "Finding city...";
+
+        try {
+            const data = await getJSON(
+                `/detect-location/?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`
+            );
+
+            if (!data.success) {
+                throw new Error(data.error || "Location lookup failed.");
+            }
+
+            const detectedCity = data.city || data.matched_city || "";
+            const detectedLocality = data.locality || "Locality not identified";
+
+            $("currentCity").textContent =
+                data.matched_city || detectedCity || "City not identified";
+
+            $("currentPlace").textContent =
+                data.matched_area || detectedLocality;
+
+            if (data.city_id) {
+                citySelect.value = String(data.city_id);
+
+                const areas = await loadAreas(data.city_id);
+
+                if (data.area_id) {
+                    areaSelect.value = String(data.area_id);
+
+                    setStatus(
+                        `Location detected: ${data.matched_area}, ${data.matched_city}.`,
+                        "success"
+                    );
+                } else {
+                    areaSelect.value = "";
+
+                    setStatus(
+                        `City detected: ${data.matched_city}. Locality "${detectedLocality}" is not saved as an area in MySQL. Select an area manually.`,
+                        "success"
+                    );
+                }
+
+            } else {
+                citySelect.value = "";
+                await loadAreas("");
+
+                setStatus(
+                    `GPS detected, but "${detectedCity || "this city"}" does not match a city saved in your MySQL database.`,
+                    "error"
+                );
+            }
+
+        } catch (error) {
+            $("currentPlace").textContent = "Locality unavailable";
+            $("currentCity").textContent = "GPS coordinates detected";
+
+            setStatus(
+                "GPS coordinates detected, but city/locality lookup failed. Nearby station search can still continue.",
+                "success"
+            );
+
+            console.error("Location detection error:", error);
+        }
+    }
+
+
+    // DETECT MY LOCATION
+
+    async function detectLocation() {
+        gpsButton.disabled = true;
+        gpsButton.innerHTML = "Detecting location...";
+
+        setStatus("Getting your GPS location...");
+
+        try {
+            const position = await getGPS();
+
+            currentLocation = {
+                lat: position.coords.latitude,
+                lon: position.coords.longitude
+            };
+
+            $("locationSummary").hidden = false;
+
+            $("currentCoordinates").textContent =
+                `${currentLocation.lat.toFixed(5)}, ${currentLocation.lon.toFixed(5)}`;
+
+            map.flyTo({
+                center: [currentLocation.lon, currentLocation.lat],
+                zoom: 14,
+                speed: 1.2
+            });
+
+            addStationMarkers([]);
+
+            // Run nearby search and reverse geocoding together.
+            searchNearby();
+
+            updateDetectedArea(
+                currentLocation.lat,
+                currentLocation.lon
+            );
+
+        } catch (error) {
+            setStatus(error.message, "error");
+
+        } finally {
+            gpsButton.disabled = false;
+            gpsButton.innerHTML = "<span>◎</span> Detect My Location";
+        }
+    }
+
+
+    // OPENSTREETMAP SEARCH
+
+    async function loadOsmStations(
+        requestNumber,
+        location,
+        radius,
+        mysqlList
+    ) {
+        try {
+            const url =
+                `/nearby-osm-stations/?lat=${location.lat}` +
+                `&lon=${location.lon}&radius=${radius}`;
+
+            const data = await getJSON(url);
+
+            if (requestNumber !== searchVersion) return;
+
+            const osmList = data.stations || [];
+            const combined = mergeStations(mysqlList, osmList);
+
+            displayStations(combined, true);
+
+            setStatus(
+                `${stations.length} nearby stations loaded. MySQL: ${mysqlList.length}, OpenStreetMap: ${osmList.length}.`,
+                "success"
+            );
+
+        } catch (error) {
+            if (requestNumber !== searchVersion) return;
+
+            displayStations(mysqlList, true);
+
+            setStatus(
+                `${mysqlList.length} MySQL stations loaded. OpenStreetMap could not respond.`,
+                "success"
+            );
+
+            console.error("OpenStreetMap station error:", error);
+        }
+    }
+
+
+    // NEARBY GPS SEARCH
+
+    async function searchNearby() {
+        if (!currentLocation) {
+            setStatus("Please detect your current location first.", "error");
+            return;
+        }
+
+        const requestNumber = ++searchVersion;
+
+        const location = {
+            lat: currentLocation.lat,
+            lon: currentLocation.lon
+        };
+
+        const radius = Number(radiusSelect.value);
+
+        searchButton.disabled = true;
+        searchButton.textContent = "Searching...";
+
+        setStatus("Finding nearby MySQL stations...");
+
+        try {
+            const mysqlUrl =
+                `/nearby-stations/?lat=${location.lat}` +
+                `&lon=${location.lon}&radius=${radius}`;
+
+            const mysqlData = await getJSON(mysqlUrl);
+
+            if (requestNumber !== searchVersion) return;
+
+            const mysqlList = mysqlData.stations || [];
+
+            displayStations(mysqlList, true);
+
+            setStatus(
+                `${stations.length} MySQL stations loaded. Searching OpenStreetMap for more stations...`,
+                "success"
+            );
+
+            loadOsmStations(
+                requestNumber,
+                location,
+                radius,
+                mysqlList
+            );
+
+        } catch (error) {
+            if (requestNumber !== searchVersion) return;
+
+            setStatus(
+                "Unable to load MySQL stations: " + error.message,
+                "error"
+            );
+
+            emptyResults(
+                "Unable to load stations",
+                "Please try your search again."
+            );
+
+        } finally {
+            if (requestNumber === searchVersion) {
+                searchButton.disabled = false;
+                searchButton.textContent = "Search Stations";
+            }
+        }
+    }
+
+
+    // MANUAL CITY + AREA SEARCH
+
+    async function searchByArea() {
+        searchVersion++;
+
+        const cityId = citySelect.value;
+        const areaId = areaSelect.value;
+
+        if (!cityId) {
+            setStatus("Please select a city.", "error");
+            return;
+        }
+
+        if (!areaId) {
+            setStatus("Please select a locality / area.", "error");
+            return;
+        }
+
+        const requestNumber = searchVersion;
+
+        searchButton.disabled = true;
+        searchButton.textContent = "Searching...";
+
+        setStatus("Searching stations in the selected locality...");
+
+        try {
+            const url =
+                `/search-stations/?city=${encodeURIComponent(cityId)}` +
+                `&area=${encodeURIComponent(areaId)}`;
+
+            const data = await getJSON(url);
+
+            if (requestNumber !== searchVersion) return;
+
+            displayStations(data.stations || [], false);
+
+            if (stations.length) {
+                const firstPoint = stations[0]._point;
+
+                map.flyTo({
+                    center: [firstPoint.lon, firstPoint.lat],
+                    zoom: 14
+                });
+
+                setStatus(
+                    `${stations.length} stations found in ${data.area}, ${data.city}.`,
+                    "success"
+                );
+
+            } else {
+                setStatus(
+                    `No MySQL charging stations are saved in ${data.area}, ${data.city}.`,
+                    "error"
+                );
+            }
+
+        } catch (error) {
+            if (requestNumber !== searchVersion) return;
+
+            setStatus(error.message, "error");
+
+            emptyResults(
+                "Unable to search this area",
+                "Please check the selected city and locality."
+            );
+
+        } finally {
+            if (requestNumber === searchVersion) {
+                searchButton.disabled = false;
+                searchButton.textContent = "Search Stations";
+            }
+        }
+    }
+
+
+    // ROUTE FUNCTIONS
+
+    function removeRoute() {
+        if (map.getLayer("driving-route-line")) {
+            map.removeLayer("driving-route-line");
+        }
+
+        if (map.getSource("driving-route")) {
+            map.removeSource("driving-route");
+        }
+
+        $("routeInfo").hidden = true;
+        $("routeStationDetails").innerHTML = "";
+    }
+
+    function showRouteStationDetails(station) {
+        $("routeStationDetails").innerHTML = `
+            <h3>${safeText(station.name || "Charging station")}</h3>
+            <p>${safeText(station.address || "Address unavailable")}</p>
+
+            <div class="card-status-row">
+                ${stationStatusHTML(station)}
+                <span class="station-source">${safeText(station.source || "")}</span>
+            </div>
+
+            ${chargerDetailsHTML(station)}
+        `;
+    }
+
+    async function showRoute(station) {
+        const destination = coordinates(station);
+
+        if (!destination) {
+            setStatus("This station has no valid coordinates.", "error");
+            return;
+        }
+
+        if (!currentLocation) {
+            setStatus("Detecting your current location for directions...");
+
+            try {
+                const position = await getGPS();
+
+                currentLocation = {
+                    lat: position.coords.latitude,
+                    lon: position.coords.longitude
+                };
+
+                $("locationSummary").hidden = false;
+
+                $("currentCoordinates").textContent =
+                    `${currentLocation.lat.toFixed(5)}, ${currentLocation.lon.toFixed(5)}`;
+
+                await updateDetectedArea(
+                    currentLocation.lat,
+                    currentLocation.lon
+                );
+
+                addStationMarkers(stations);
+
+            } catch (error) {
+                setStatus(
+                    "Cannot show directions without GPS. " + error.message,
+                    "error"
+                );
+                return;
+            }
+        }
+
+        if (
+            Math.abs(currentLocation.lat - destination.lat) < 0.000001 &&
+            Math.abs(currentLocation.lon - destination.lon) < 0.000001
+        ) {
+            setStatus("You are already at this station.", "success");
+            return;
+        }
+
+        setStatus("Calculating driving directions...");
+
+        try {
+            removeRoute();
+            showRouteStationDetails(station);
+
+            const start = `${currentLocation.lon},${currentLocation.lat}`;
+            const end = `${destination.lon},${destination.lat}`;
+
+            const url =
+                `https://router.project-osrm.org/route/v1/driving/${start};${end}` +
+                `?overview=full&geometries=geojson`;
+
+            const data = await getJSON(url);
+
+            if (
+                data.code !== "Ok" ||
+                !data.routes ||
+                !data.routes.length
+            ) {
+                throw new Error("No driving route available for this station.");
+            }
+
+            const route = data.routes[0];
+
+            map.addSource("driving-route", {
+                type: "geojson",
+                data: {
+                    type: "Feature",
+                    properties: {},
+                    geometry: route.geometry
+                }
+            });
+
+            map.addLayer({
+                id: "driving-route-line",
+                type: "line",
+                source: "driving-route",
+                layout: {
+                    "line-join": "round",
+                    "line-cap": "round"
+                },
+                paint: {
+                    "line-color": "#287bff",
+                    "line-width": 6,
+                    "line-opacity": 0.9
+                }
+            });
+
+            const km = route.distance / 1000;
+            const minutes = Math.round(route.duration / 60);
+
+            $("routeDistance").textContent = km.toFixed(1) + " km";
+
+            $("routeDuration").textContent =
+                minutes < 60
+                    ? minutes + " min"
+                    : Math.floor(minutes / 60) +
+                      " hr " + (minutes % 60) + " min";
+
+            $("routeInfo").hidden = false;
+
+            const coords = route.geometry.coordinates;
+
+            const bounds = coords.reduce(
+                (result, point) => result.extend(point),
+                new maplibregl.LngLatBounds(coords[0], coords[0])
+            );
+
+            const mobile = window.innerWidth <= 650;
+
+            map.fitBounds(bounds, {
+                padding: mobile
+                    ? { top: 90, bottom: 70, left: 35, right: 35 }
+                    : { top: 100, bottom: 80, left: 410, right: 80 },
+                maxZoom: 15,
+                duration: 1000
+            });
+
+            setStatus(
+                "Directions to " + (station.name || "selected station") + " displayed.",
+                "success"
+            );
+
+        } catch (error) {
+            $("routeInfo").hidden = true;
+            setStatus(
+                error.message || "Unable to calculate directions.",
+                "error"
+            );
+        }
+    }
+
+
+    // BUTTON EVENTS
+
+    gpsButton.addEventListener("click", detectLocation);
+
+    searchButton.addEventListener("click", () => {
+        // Manual selection takes priority over GPS.
+        if (citySelect.value && areaSelect.value) {
+            searchByArea();
+        } else if (citySelect.value && !areaSelect.value) {
+            setStatus("Please select a locality for the selected city.", "error");
+        } else if (currentLocation) {
+            searchNearby();
+        } else {
+            setStatus(
+                "Please detect your location or select a city and area.",
+                "error"
+            );
+        }
+    });
+
+    radiusSelect.addEventListener("change", () => {
+        if (currentLocation && !areaSelect.value) {
+            searchNearby();
+        }
+    });
+
+    $("closeRoute").addEventListener("click", removeRoute);
+
+});
+</script>
+
+</body>
+</html>
